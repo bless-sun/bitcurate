@@ -225,3 +225,106 @@
     (ok true)
   )
 )
+
+;; Direct creator monetization system
+(define-public (reward-creator (content-id uint) (reward-amount uint))
+  (let
+    (
+      (target-content (unwrap! (map-get? content-registry { content-id: content-id }) ERR_CONTENT_NOT_FOUND))
+    )
+    ;; Validation
+    (asserts! (content-exists content-id) ERR_CONTENT_NOT_FOUND)
+    (asserts! (>= (stx-get-balance tx-sender) reward-amount) ERR_INSUFFICIENT_FUNDS)
+    
+    ;; Update content reward tracking
+    (map-set content-registry
+      { content-id: content-id }
+      (merge target-content { 
+        total-rewards: (+ (get total-rewards target-content) reward-amount) 
+      })
+    )
+    
+    ;; Execute reward transfer
+    (try! (stx-transfer? reward-amount tx-sender (get creator target-content)))
+    
+    ;; Emit reward event
+    (print { 
+      event: "creator-rewarded", 
+      content-id: content-id, 
+      sender: tx-sender, 
+      recipient: (get creator target-content), 
+      amount: reward-amount 
+    })
+    
+    (ok true)
+  )
+)
+
+;; Community-driven content moderation
+(define-public (flag-content (content-id uint))
+  (let
+    (
+      (target-content (unwrap! (map-get? content-registry { content-id: content-id }) ERR_CONTENT_NOT_FOUND))
+    )
+    ;; Validation
+    (asserts! (content-exists content-id) ERR_CONTENT_NOT_FOUND)
+    (asserts! (not (is-eq (get creator target-content) tx-sender)) ERR_INVALID_FLAG_OPERATION)
+    
+    ;; Increment flag counter
+    (map-set content-registry
+      { content-id: content-id }
+      (merge target-content { 
+        flag-count: (+ (get flag-count target-content) u1) 
+      })
+    )
+    
+    ;; Emit moderation event
+    (print { 
+      event: "content-flagged", 
+      content-id: content-id, 
+      flagger: tx-sender 
+    })
+    
+    (ok true)
+  )
+)
+
+;; PUBLIC QUERY FUNCTIONS (READ-ONLY)
+
+;; Retrieve complete content information
+(define-read-only (get-content-info (content-id uint))
+  (map-get? content-registry { content-id: content-id })
+)
+
+;; Get user's voting history for specific content
+(define-read-only (get-user-vote (user principal) (content-id uint))
+  (get vote-value (map-get? user-votes { voter: user, content-id: content-id }))
+)
+
+;; Platform statistics
+(define-read-only (get-total-content-count)
+  (var-get total-content-count)
+)
+
+;; User reputation lookup
+(define-read-only (get-user-reputation (user principal))
+  (default-to { reputation-score: 0 } (map-get? user-reputation { user: user }))
+)
+
+;; Generate content ID list for batch operations
+(define-read-only (get-content-id-list (count uint))
+  (filter filter-non-zero (generate-id-sequence count))
+)
+
+;; Curated content discovery (quality-filtered)
+(define-read-only (get-trending-content (limit uint))
+  (let
+    (
+      (total-content (var-get total-content-count))
+      (safe-limit (if (> limit total-content) total-content limit))
+    )
+    (filter is-valid-content
+      (map get-quality-content (get-content-id-list safe-limit))
+    )
+  )
+)
