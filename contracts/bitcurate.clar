@@ -328,3 +328,59 @@
     )
   )
 )
+
+;; ADMINISTRATIVE FUNCTIONS (GOVERNANCE)
+
+;; Economic parameter adjustment
+(define-public (update-submission-fee (new-fee uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_UNAUTHORIZED)
+    (asserts! (<= new-fee MAXIMUM_UINT_VALUE) ERR_ARITHMETIC_OVERFLOW)
+    
+    (var-set content-submission-fee new-fee)
+    
+    (print { 
+      event: "fee-updated", 
+      new-fee: new-fee 
+    })
+    
+    (ok true)
+  )
+)
+
+;; Content removal for policy violations
+(define-public (remove-content (content-id uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_UNAUTHORIZED)
+    (asserts! (content-exists content-id) ERR_CONTENT_NOT_FOUND)
+    
+    (map-delete content-registry { content-id: content-id })
+    
+    (print { 
+      event: "content-removed", 
+      content-id: content-id 
+    })
+    
+    (ok true)
+  )
+)
+
+;; Dynamic category management
+(define-public (add-content-category (new-category (string-ascii 20)))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_UNAUTHORIZED)
+    (asserts! (< (len (var-get available-categories)) u10) ERR_INVALID_CATEGORY)
+    (asserts! (>= (len new-category) u1) ERR_INVALID_CATEGORY)
+    
+    (var-set available-categories 
+      (unwrap-panic (as-max-len? (append (var-get available-categories) new-category) u10))
+    )
+    
+    (print { 
+      event: "category-added", 
+      category: new-category 
+    })
+    
+    (ok true)
+  )
+)
