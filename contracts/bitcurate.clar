@@ -99,3 +99,129 @@
   })))
   (is-some content)
 )
+
+;; Quality threshold filter (non-negative community score)
+(define-private (get-quality-content (id uint))
+  (match (map-get? content-registry { content-id: id })
+    content (if (>= (get community-score content) 0) (some content) none)
+    none
+  )
+)
+
+;; Sequential ID generator for batch operations
+(define-private (generate-id-sequence (count uint))
+  (let ((safe-limit (if (> count u10) u10 count)))
+    (list
+      (if (>= safe-limit u1) u1 u0)
+      (if (>= safe-limit u2) u2 u0)
+      (if (>= safe-limit u3) u3 u0)
+      (if (>= safe-limit u4) u4 u0)
+      (if (>= safe-limit u5) u5 u0)
+      (if (>= safe-limit u6) u6 u0)
+      (if (>= safe-limit u7) u7 u0)
+      (if (>= safe-limit u8) u8 u0)
+      (if (>= safe-limit u9) u9 u0)
+      (if (>= safe-limit u10) u10 u0)
+    )
+  )
+)
+
+;; Zero value filter for list operations
+(define-private (filter-non-zero (value uint))
+  (not (is-eq value u0))
+)
+
+;; PUBLIC CONTENT MANAGEMENT FUNCTIONS
+
+;; Submit new content to the community marketplace
+(define-public (submit-content (title (string-ascii 100)) (url (string-ascii 200)) (category (string-ascii 20)))
+  (let
+    (
+      (new-content-id (+ (var-get total-content-count) u1))
+    )
+    ;; Input validation
+    (asserts! (and 
+                (>= (len title) u1)
+                (>= (len url) MINIMUM_URL_LENGTH)
+                (>= (len category) u1)
+              ) ERR_INVALID_CONTENT)
+    (asserts! (> new-content-id (var-get total-content-count)) ERR_ARITHMETIC_OVERFLOW)
+    (asserts! (is-some (index-of (var-get available-categories) category)) ERR_INVALID_CATEGORY)
+    (asserts! (>= (stx-get-balance tx-sender) (var-get content-submission-fee)) ERR_INSUFFICIENT_FUNDS)
+    
+    ;; Process submission fee
+    (try! (stx-transfer? (var-get content-submission-fee) tx-sender CONTRACT_OWNER))
+    
+    ;; Register content in blockchain
+    (map-set content-registry
+      { content-id: new-content-id }
+      {
+        creator: tx-sender,
+        title: title,
+        url: url,
+        category: category,
+        creation-block: stacks-block-height,
+        community-score: 0,
+        total-rewards: u0,
+        flag-count: u0
+      }
+    )
+    
+    ;; Update global state
+    (var-set total-content-count new-content-id)
+    
+    ;; Emit event for indexers
+    (print { 
+      event: "content-submitted", 
+      content-id: new-content-id, 
+      creator: tx-sender,
+      category: category
+    })
+    
+    (ok new-content-id)
+  )
+)
+
+;; Community voting mechanism with reputation integration
+(define-public (vote-on-content (content-id uint) (vote-value int))
+  (let
+    (
+      (previous-vote (default-to 0 (get vote-value (map-get? user-votes { voter: tx-sender, content-id: content-id }))))
+      (target-content (unwrap! (map-get? content-registry { content-id: content-id }) ERR_CONTENT_NOT_FOUND))
+      (voter-reputation (default-to { reputation-score: 0 } (map-get? user-reputation { user: tx-sender })))
+    )
+    ;; Validation checks
+    (asserts! (content-exists content-id) ERR_CONTENT_NOT_FOUND)
+    (asserts! (or (is-eq vote-value 1) (is-eq vote-value -1)) ERR_INVALID_VOTE)
+    
+    ;; Record user's vote
+    (map-set user-votes
+      { voter: tx-sender, content-id: content-id }
+      { vote-value: vote-value }
+    )
+    
+    ;; Update content community score
+    (map-set content-registry
+      { content-id: content-id }
+      (merge target-content { 
+        community-score: (+ (get community-score target-content) (- vote-value previous-vote)) 
+      })
+    )
+    
+    ;; Update voter reputation
+    (map-set user-reputation
+      { user: tx-sender }
+      { reputation-score: (+ (get reputation-score voter-reputation) vote-value) }
+    )
+    
+    ;; Emit voting event
+    (print { 
+      event: "content-voted", 
+      content-id: content-id, 
+      voter: tx-sender, 
+      vote: vote-value 
+    })
+    
+    (ok true)
+  )
+)
